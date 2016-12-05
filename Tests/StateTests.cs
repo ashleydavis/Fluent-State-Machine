@@ -11,6 +11,13 @@ namespace RSG.FluentStateMachineTests
     {
         class TestState : AbstractState { }
 
+        class TestEventArgs : EventArgs
+        {
+            public string TestString { get; set; }
+        }
+
+        class OtherTestEventArgs : EventArgs { }
+
         AbstractState CreateTestState()
         {
             return new TestState();
@@ -366,6 +373,133 @@ namespace RSG.FluentStateMachineTests
 
             mockState1.Verify(m => m.Exit(), Times.Once());
             mockState2.Verify(m => m.Exit(), Times.Once());
+        }
+
+        [Fact]
+        public void set_event_makes_event_triggerable_by_name()
+        {
+            var rootState = CreateTestState();
+
+            var calls = 0;
+
+            rootState.SetEvent("foo", _ => calls++);
+
+            rootState.TriggerEvent("foo");
+
+            Assert.Equal(1, calls);
+        }
+
+        [Fact]
+        public void events_are_only_triggered_on_top_of_stack()
+        {
+            var rootState = CreateTestState();
+
+            var mockState = new Mock<IState>();
+            var topState = CreateTestState();
+
+            rootState.AddChild(mockState.Object, "foo");
+            rootState.AddChild(topState, "bar");
+
+            rootState.ChangeState("foo");
+            rootState.PushState("bar");
+
+            rootState.TriggerEvent("someEvent");
+
+            mockState.Verify(m => m.TriggerEvent(It.IsAny<String>()), Times.Never());
+        }
+
+        [Fact]
+        public void events_are_only_triggered_on_active_child()
+        {
+            var rootState = CreateTestState();
+            var childState = CreateTestState();
+
+            var rootStateCalls = 0;
+            var childStateCalls = 0;
+
+            rootState.SetEvent("foo", _ => rootStateCalls++);
+            childState.SetEvent("foo", _ => childStateCalls++);
+
+            rootState.AddChild(childState, "child state");
+            rootState.PushState("child state");
+
+            rootState.TriggerEvent("foo");
+
+            Assert.Equal(0, rootStateCalls);
+            Assert.Equal(1, childStateCalls);
+        }
+
+        [Fact]
+        public void events_are_no_longer_triggered_on_deactivated_states()
+        {
+            var rootState = CreateTestState();
+
+            var mockState = new Mock<IState>();
+            rootState.AddChild(mockState.Object, "foo");
+
+            rootState.ChangeState("foo");
+            rootState.TriggerEvent("someEvent");
+            rootState.PopState();
+            rootState.TriggerEvent("someEvent");
+
+            mockState.Verify(state => state.TriggerEvent(It.IsAny<String>(), It.IsAny<EventArgs>()), Times.Once());
+        }
+
+        [Fact]
+        public void event_args_are_empty_when_not_specified()
+        {
+            var rootState = CreateTestState();
+
+            var calls = 0;
+
+            rootState.SetEvent("foo", eventArgs => {
+                if (eventArgs == EventArgs.Empty)
+                {
+                    calls++;
+                }
+            });
+
+            rootState.TriggerEvent("foo");
+
+            Assert.Equal(1, calls);
+        }
+
+        [Fact]
+        public void event_args_are_passed_on_to_child_event()
+        {
+            var rootState = CreateTestState();
+
+            var expectedString = "test";
+            var actualString = string.Empty;
+
+            var testEventArgs = new TestEventArgs();
+            testEventArgs.TestString = expectedString;
+
+            var childState = CreateTestState();
+            rootState.AddChild(childState, "Child");
+
+            childState.SetEvent("foo", eventArgs => {
+                var actualEventArgs = (TestEventArgs)eventArgs;
+
+                actualString = actualEventArgs.TestString;
+            });
+
+            rootState.PushState("Child");
+
+            rootState.TriggerEvent("foo", testEventArgs);
+
+            Assert.Equal(expectedString, actualString);
+        }
+
+        [Fact]
+        public void triggering_event_with_incorrect_type_of_EventArgs_throws_exception()
+        {
+            var rootState = CreateTestState();
+
+            rootState.SetEvent<OtherTestEventArgs>("foo", _ => { });
+
+            Assert.Throws<ApplicationException>(() =>
+                rootState.TriggerEvent("foo", new TestEventArgs()));
         }
     }
 }

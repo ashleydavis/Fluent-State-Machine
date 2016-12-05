@@ -46,6 +46,21 @@ namespace RSG
         /// Triggered when we exit the state.
         /// </summary>
         void Exit();
+
+        /// <summary>
+        /// Trigger an event on this state or one of its children.
+        /// </summary>
+        /// <param name="name">Name of the event to trigger</param>
+        void TriggerEvent(string name);
+
+        /// <summary>
+        /// Triggered when and event occurs. Executes the event's action if the 
+        /// current state is at the top of the stack, otherwise triggers it on 
+        /// the next state down.
+        /// </summary>
+        /// <param name="name">Name of the event to trigger</param>
+        /// <param name="eventArgs">Arguments to send to the event</param>
+        void TriggerEvent(string name, EventArgs eventArgs);
     }
 
     /// <summary>
@@ -84,6 +99,11 @@ namespace RSG
         /// Dictionary of all children (active and inactive), and their names.
         /// </summary>
         private IDictionary<string, IState> children = new Dictionary<string, IState>();
+
+        /// <summary>
+        /// Dictionary of all actions associated with this state.
+        /// </summary>
+        private IDictionary<string, Action<EventArgs>> events = new Dictionary<string, Action<EventArgs>>();
 
         /// <summary>
         /// Pops the current state from the stack and pushes the specified one on.
@@ -129,7 +149,7 @@ namespace RSG
         public void PopState()
         {
             // Exit and pop the current state
-            if (activeChildren.Any())
+            if (activeChildren.Count > 0)
             {
                 activeChildren.Pop().Exit();
             }
@@ -145,7 +165,7 @@ namespace RSG
         public void Update(float deltaTime)
         {
             // Only update the child at the end of the tree
-            if (activeChildren.Any())
+            if (activeChildren.Count > 0)
             {
                 activeChildren.Peek().Update(deltaTime);
                 return;
@@ -157,11 +177,11 @@ namespace RSG
             }
 
             // Update conditions
-            foreach (var conditon in conditions)
+            for (var i = 0; i < conditions.Count; i++)
             {
-                if (conditon.Predicate())
+                if (conditions[i].Predicate())
                 {
-                    conditon.Action();
+                    conditions[i].Action();
                 }
             }
         }
@@ -239,6 +259,44 @@ namespace RSG
         }
 
         /// <summary>
+        /// Sets an action to be associated with an identifier that can later be used
+        /// to trigger it.
+        /// Convenience method that uses default event args intended for events that 
+        /// don't need any arguments.
+        /// </summary>
+        public void SetEvent(string identifier, Action<EventArgs> eventTriggeredAction)
+        {
+            SetEvent<EventArgs>(identifier, eventTriggeredAction);
+        }
+
+        /// <summary>
+        /// Sets an action to be associated with an identifier that can later be used
+        /// to trigger it.
+        /// </summary>
+        public void SetEvent<TEvent>(string identifier, Action<TEvent> eventTriggeredAction)
+            where TEvent : EventArgs
+        {
+            events.Add(identifier, args => eventTriggeredAction(CheckEventArgs<TEvent>(identifier, args)));
+        }
+
+        /// <summary>
+        /// Cast the specified EventArgs to a specified type, throwing a descriptive exception if this fails.
+        /// </summary>
+        private static TEvent CheckEventArgs<TEvent>(string identifier, EventArgs args) 
+            where TEvent : EventArgs
+        {
+            try
+            {
+                return (TEvent)args;
+            }
+            catch (InvalidCastException ex)
+            {
+                throw new ApplicationException("Could not invoke event \"" + identifier + "\" with argument of type " +
+                    args.GetType().Name + ". Expected " + typeof(TEvent).Name, ex);
+            }
+        }
+
+        /// <summary>
         /// Triggered when we enter the state.
         /// </summary>
         public void Enter()
@@ -259,9 +317,43 @@ namespace RSG
                 onExit();
             }
 
-            while (activeChildren.Any())
+            while (activeChildren.Count > 0)
             {
                 activeChildren.Pop().Exit();
+            }
+        }
+
+        /// <summary>
+        /// Triggered when and event occurs. Executes the event's action if the 
+        /// current state is at the top of the stack, otherwise triggers it on 
+        /// the next state down.
+        /// </summary>
+        /// <param name="name">Name of the event to trigger</param>
+        public void TriggerEvent(string name)
+        {
+            TriggerEvent(name, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// Triggered when and event occurs. Executes the event's action if the 
+        /// current state is at the top of the stack, otherwise triggers it on 
+        /// the next state down.
+        /// </summary>
+        /// <param name="name">Name of the event to trigger</param>
+        /// <param name="eventArgs">Arguments to send to the event</param>
+        public void TriggerEvent(string name, EventArgs eventArgs)
+        {
+            // Only update the child at the end of the tree
+            if (activeChildren.Count > 0)
+            {
+                activeChildren.Peek().TriggerEvent(name, eventArgs);
+                return;
+            }
+
+            Action<EventArgs> myEvent;
+            if (events.TryGetValue(name, out myEvent))
+            {
+                myEvent(eventArgs);
             }
         }
     }
